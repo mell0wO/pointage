@@ -8,18 +8,18 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QCo
 from sqlalchemy import create_engine
 from matplotlib.dates import DateFormatter
 
-class Dashboard(QMainWindow):
+class Dashboard(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Jour de la Semaine vs Travail")
         self.setGeometry(100, 100, 1200, 800)
-
+        """
         # Create a widget for the central area
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-
+        """
         # Create the main layout
-        self.layout = QVBoxLayout(self.central_widget)
+        self.layout = QVBoxLayout(self)
 
         # Create a filter layout for month and name selection
         self.filter_layout = QHBoxLayout()
@@ -293,7 +293,7 @@ class Dashboard(QMainWindow):
         self.canvas.draw()
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = Dashboard()
-    window.show()
+    app = QWidget(sys.argv)
+    window = Dashboard ()
+    window.showMaximized()
     sys.exit(app.exec_())
