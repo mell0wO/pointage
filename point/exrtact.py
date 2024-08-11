@@ -41,19 +41,19 @@ class PandasModel(QAbstractTableModel):
 
     def setData(self, index, value, role=Qt.EditRole):
         if index.isValid() and role == Qt.EditRole:
-            col_name = self.df.columns[index.column()]  # Get the column name from the index
+            col_name = self.df.columns[index.column()]  # obtenir le nom de la colonne à partir de l'index
             if col_name == 'Commentaire':
                 self.df.iat[index.row(), index.column()] = value
                 self.dataChanged.emit(index, index)
                 return True
             elif col_name == 'Travail':
                 try:
-                    # Parse 'Travail' time in hh:mm format
-                    new_time = pd.to_timedelta(value + ':00')  # Add seconds as :00
-                    # Convert timedelta to hh:mm format
-                    time_str = str(new_time).split()[2][:5]  # Extract 'hh:mm'
+                    # analyser le temps de 'Travail' au format hh:mm
+                    new_time = pd.to_timedelta(value + ':00') 
+                    # convertir timedelta au format hh:mm
+                    time_str = str(new_time).split()[2][:5]  # extraire 'hh:mm'
                     self.df.iat[index.row(), index.column()] = time_str
-                    # Update cumulative time starting from this row
+                    # mettre à jour le temps cumulé à partir de cette ligne
                     self.update_cumulative_travail(start_index=index.row())
                     self.dataChanged.emit(index, index)
                     return True
@@ -61,11 +61,11 @@ class PandasModel(QAbstractTableModel):
                     return False
             elif col_name == 'Date':
                 try:
-                    # Parse 'Date' in yyyy-mm-dd format
+                    # analyser 'Date' au format yyyy-mm-dd
                     new_date = pd.to_datetime(value, format='%Y-%m-%d', errors='coerce')
                     if pd.notna(new_date):
                         self.df.iat[index.row(), index.column()] = new_date.strftime('%Y-%m-%d')
-                        # Update cumulative time starting from this row
+                        # mettre à jour le temps cumulé à partir de cette ligne
                         self.update_cumulative_travail(start_index=index.row())
                         self.dataChanged.emit(index, index)
                         return True
@@ -77,11 +77,11 @@ class PandasModel(QAbstractTableModel):
         return False
 
     def update_cumulative_travail(self, start_index=0):
-        cumulative_time = pd.Timedelta(0)  # Initialize cumulative time
+        cumulative_time = pd.Timedelta(0)  # initialiser le temps cumulé
 
         for index, row in self.df.iterrows():
             if index < start_index:
-                # Skip rows before the starting index
+                # ignorer les lignes avant l'index de départ
                 cumulative_time = pd.to_timedelta(row['Travail Cumulée'] + ':00')
                 continue
 
@@ -95,7 +95,7 @@ class PandasModel(QAbstractTableModel):
                 except ValueError:
                     self.df.at[index, 'Travail Cumulée'] = cumulative_time
 
-        # Format 'Travail Cumulée' column as 'hh:mm'
+        # formater la colonne 'Travail Cumulée' en 'hh:mm'
         self.df['Travail Cumulée'] = self.df['Travail Cumulée'].apply(lambda x: str(x).split()[-1] if pd.notna(x) else '00:00')
 
 
@@ -136,7 +136,7 @@ class ExcelFileHandler:
 
                 print(f"File loaded: {file_path}")
                 print("Initial DataFrame:")
-                print(df.head())  # Print the first few rows to check the data
+                print(df.head())  # afficher les premières lignes pour vérifier les données
 
                 if all(col in df.columns for col in ['Entrée.', 'Sortie.', 'Nom.']):
                     extracted_data = []
@@ -253,8 +253,8 @@ class ExcelFileHandler:
                 date = row['Date'] if row['Date'] != 'Abs' else None
                 travail = row['Travail'] if row['Travail'] != 'Abs' else None
                 travail_cumulee = row['Travail Cumulée'] if row['Travail Cumulée'] != 'Abs' else None
-
-                # If Nom or Date is None, skip the insertion
+                
+              # si Nom ou Date est None, ignorer l'insertion
                 if nom is None or date is None:
                     print(f"Skipping row with missing Nom or Date: {row}")
                     continue
@@ -294,7 +294,7 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         self.load_button = QPushButton("Charger le fichier Excel")
         self.save_button = QPushButton("Enregistrez le fichier Excel")
-        self.insert_button = QPushButton("Insérer dans la bd")  # New button
+        self.insert_button = QPushButton("Insérer dans la bd")
         self.dashboard_button = QPushButton("Tableau de bord")
         self.table_view = QTableView()
 
@@ -303,7 +303,7 @@ class MainWindow(QMainWindow):
         self.insert_button.clicked.connect(self.insert_data_to_db)  
         self.dashboard_button.clicked.connect(self.open_dashboard)
 
-        # Create horizontal layout for buttons
+        # créer une mise en page horizontale pour les boutons
         button_layout = QHBoxLayout()
         button_layout.addWidget(self.load_button)
         button_layout.addWidget(self.save_button)
@@ -311,7 +311,7 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.dashboard_button)
         button_layout.setAlignment(Qt.AlignCenter)
 
-        # Set button sizes
+        # définir les tailles des boutons
         self.load_button.setFixedSize(300, 70)
         self.save_button.setFixedSize(300, 70)
         self.insert_button.setFixedSize(300, 70) 
@@ -407,11 +407,11 @@ class MainWindow(QMainWindow):
             self.file_handler.insert_to_db(df)
 
     def open_dashboard(self):
-        # Hide the main window
+        # cacher la fenêtre principale
         self.hide()
         dashboard = Dashboard()
         self.setCentralWidget(dashboard)
-        # Create an instance of CourriersWidget
+        # créer une instance de CourriersWidget
         self.showMaximized() 
         
     def update_table_view(self, df):
