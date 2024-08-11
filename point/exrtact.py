@@ -53,8 +53,8 @@ class PandasModel(QAbstractTableModel):
                     # Convert timedelta to hh:mm format
                     time_str = str(new_time).split()[2][:5]  # Extract 'hh:mm'
                     self.df.iat[index.row(), index.column()] = time_str
-                    # Update entire 'Travail Cumulée' column
-                    self.update_cumulative_travail()
+                    # Update cumulative time starting from this row
+                    self.update_cumulative_travail(start_index=index.row())
                     self.dataChanged.emit(index, index)
                     return True
                 except ValueError:
@@ -65,8 +65,8 @@ class PandasModel(QAbstractTableModel):
                     new_date = pd.to_datetime(value, format='%Y-%m-%d', errors='coerce')
                     if pd.notna(new_date):
                         self.df.iat[index.row(), index.column()] = new_date.strftime('%Y-%m-%d')
-                        # Update entire 'Travail Cumulée' column
-                        self.update_cumulative_travail()
+                        # Update cumulative time starting from this row
+                        self.update_cumulative_travail(start_index=index.row())
                         self.dataChanged.emit(index, index)
                         return True
                     else:
@@ -76,15 +76,20 @@ class PandasModel(QAbstractTableModel):
                     return False
         return False
 
-    def update_cumulative_travail(self):
+    def update_cumulative_travail(self, start_index=0):
         cumulative_time = pd.Timedelta(0)  # Initialize cumulative time
 
         for index, row in self.df.iterrows():
-            if row['Date'] == 'Abs':
+            if index < start_index:
+                # Skip rows before the starting index
+                cumulative_time = pd.to_timedelta(row['Travail Cumulée'] + ':00')
+                continue
+
+            if row['Travail'] == 'Abs':
                 self.df.at[index, 'Travail Cumulée'] = cumulative_time
             else:
                 try:
-                    travail = pd.to_timedelta(row['Travail'])
+                    travail = pd.to_timedelta(row['Travail'] + ':00')
                     cumulative_time += travail
                     self.df.at[index, 'Travail Cumulée'] = cumulative_time
                 except ValueError:
