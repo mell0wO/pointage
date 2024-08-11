@@ -406,17 +406,9 @@ class MainWindow(QMainWindow):
         self.hide()
         dashboard = Dashboard()
         self.setCentralWidget(dashboard)
-        # Load the UI file for cour
-        self.cour_window = QDialog()
-        self.cour_window.show()
         # Create an instance of CourriersWidget
         self.showMaximized() 
-        # Check if the courriers_widget is not None before adding it to the layout
-        if dashboard is not None:
-            layout = QVBoxLayout()
-            layout.addWidget(dashboard)  # Add the CourriersWidget to the layout
-            self.cour_window.setLayout(layout)
-
+        
     def update_table_view(self, df):
         model = PandasModel(df)
         self.table_view.setModel(model)
