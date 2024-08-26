@@ -65,9 +65,6 @@ class PandasModel(QAbstractTableModel):
                     new_date = pd.to_datetime(value, format='%Y-%m-%d', errors='coerce')
                     if pd.notna(new_date):
                         self.df.iat[index.row(), index.column()] = new_date.strftime('%Y-%m-%d')
-                        # mettre à jour le temps cumulé à partir de cette ligne
-                        self.update_cumulative_travail(start_index=index.row())
-                        self.dataChanged.emit(index, index)
                         return True
                     else:
                         return False
