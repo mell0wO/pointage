@@ -1,442 +1,338 @@
-import subprocess
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QFileDialog, QPushButton, QVBoxLayout, 
-                             QHBoxLayout, QWidget, QTableView, QMessageBox, QSizePolicy, QDialog)
-from PyQt5.QtCore import QAbstractTableModel, Qt
-from PyQt5.QtGui import QColor
-import pandas as pd
-from openpyxl import load_workbook
-import psycopg2
-from config import config
 import sys
-import os
-from dashboard import Dashboard
+from matplotlib.table import Table
+import pandas as pd
+import matplotlib.pyplot as plt
+import mplcursors
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from PyQt5.QtWidgets import QApplication, QVBoxLayout, QWidget, QListWidget, QPushButton, QHBoxLayout, QListWidgetItem
+from sqlalchemy import create_engine
+from matplotlib.dates import DateFormatter
+import seaborn as sns
 
-class PandasModel(QAbstractTableModel):
-    def __init__(self, df=pd.DataFrame()):
-        super(PandasModel, self).__init__()
-        self.df = df
+class Dashboard(QWidget):
 
-    def rowCount(self, parent=None):
-        return len(self.df)
-
-    def columnCount(self, parent=None):
-        return len(self.df.columns)
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-        if role == Qt.DisplayRole:
-            return str(self.df.iloc[index.row(), index.column()])
-        if role == Qt.BackgroundRole and index.column() == 2:
-            return QColor(220, 220, 255)
-        return None
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if role == Qt.DisplayRole:
-            if orientation == Qt.Horizontal:
-                return self.df.columns[section]
-            else:
-                return str(section + 1)
-        return None
-
-    def setData(self, index, value, role=Qt.EditRole):
-        if index.isValid() and role == Qt.EditRole:
-            col_name = self.df.columns[index.column()]  # obtenir le nom de la colonne à partir de l'index
-            if col_name == 'Commentaire':
-                self.df.iat[index.row(), index.column()] = value
-                self.dataChanged.emit(index, index)
-                return True
-            elif col_name == 'Travail':
-                try:
-                    # analyser le temps de 'Travail' au format hh:mm
-                    new_time = pd.to_timedelta(value + ':00') 
-                    # convertir timedelta au format hh:mm
-                    time_str = str(new_time).split()[2][:5]  # extraire 'hh:mm'
-                    self.df.iat[index.row(), index.column()] = time_str
-                    # mettre à jour le temps cumulé à partir de cette ligne
-                    self.update_cumulative_travail(start_index=index.row())
-                    self.dataChanged.emit(index, index)
-                    return True
-                except ValueError:
-                    return False
-            elif col_name == 'Date':
-                try:
-                    # analyser 'Date' au format yyyy-mm-dd
-                    new_date = pd.to_datetime(value, format='%Y-%m-%d', errors='coerce')
-                    if pd.notna(new_date):
-                        self.df.iat[index.row(), index.column()] = new_date.strftime('%Y-%m-%d')
-                        return True
-                    else:
-                        return False
-                except Exception as e:
-                    print(f"Error updating Date column: {e}")
-                    return False
-        return False
-
-    def update_cumulative_travail(self, start_index=0):
-        total_hours = 0  # total hours accumulated
-        total_minutes = 0  # total minutes accumulated
-
-        for index, row in self.df.iterrows():
-            if index < start_index:
-                # ignore rows before the start index
-                if row['Travail Cumulée'] and isinstance(row['Travail Cumulée'], str):
-                    time_parts = row['Travail Cumulée'].split(':')
-                    total_hours = int(time_parts[0])
-                    total_minutes = int(time_parts[1])
-                continue
-
-            if row['Travail'] == 'Abs':
-                self.df.at[index, 'Travail Cumulée'] = f"{total_hours:02}:{total_minutes:02}"
-            else:
-                try:
-                    travail_parts = row['Travail'].split(':')
-                    travail_hours = int(travail_parts[0])
-                    travail_minutes = int(travail_parts[1]) if len(travail_parts) > 1 else 0
-                    total_hours += travail_hours
-                    total_minutes += travail_minutes
-
-                    if total_minutes >= 60:
-                        extra_hours = total_minutes // 60
-                        total_hours += extra_hours
-                        total_minutes = total_minutes % 60
-
-                    self.df.at[index, 'Travail Cumulée'] = f"{total_hours:02}:{total_minutes:02}"
-                except ValueError:
-                    self.df.at[index, 'Travail Cumulée'] = f"{total_hours:02}:{total_minutes:02}"
-
-    def flags(self, index):
-        if not index.isValid():
-            return Qt.ItemIsEnabled
-        if self.df.columns[index.column()] in ['Commentaire', 'Travail', 'Date']:
-            return Qt.ItemIsEditable | Qt.ItemIsEnabled | Qt.ItemIsSelectable
-        return Qt.ItemIsEnabled | Qt.ItemIsSelectable
-
-    def get_dataframe(self):
-        return self.df
-
-class ExcelFileHandler:
     def __init__(self):
-        self.df = pd.DataFrame()
+        super().__init__()
+        self.setWindowTitle("Jour de la Semaine vs Travail")
+        self.setGeometry(100, 100, 1200, 800)
+        self.layout = QVBoxLayout(self)
+        self.list_widget = QListWidget()
 
-    def connect_db(self):
-        try:
-            params = config()
-            connection = psycopg2.connect(**params)
-            print("Database connection successful")
-            return connection
-        except Exception as error:
-            print(f"Database connection error: {error}")
-            return None
+        self.filter_layout = QHBoxLayout()
+        self.layout.addLayout(self.filter_layout)
 
-    def load_excel(self, file_path):
-        if os.path.exists(file_path):
-            try:
-                if file_path.endswith('.xlsx'):
-                    df = pd.read_excel(file_path, engine='openpyxl')
-                elif file_path.endswith('.xls'):
-                    df = pd.read_excel(file_path, engine='xlrd')
-                else:
-                    print(f"Unsupported file format: {file_path}")
-                    return None
+        self.month_listwidget = QListWidget()
+        self.month_listwidget.addItem("Tous les mois")
+        for month in range(1, 13):
+            self.month_listwidget.addItem(f"{month:02d}")
+        self.month_listwidget.setSelectionMode(QListWidget.MultiSelection)
+        self.filter_layout.addWidget(self.month_listwidget)
 
-                print(f"File loaded: {file_path}")
-                print("Initial DataFrame:")
-                print(df.head())  # afficher les premières lignes pour vérifier les données
+        self.name_listwidget = QListWidget()
+        self.name_listwidget.addItem("Tous les noms")
+        self.name_listwidget.setSelectionMode(QListWidget.MultiSelection)
+        self.filter_layout.addWidget(self.name_listwidget)
 
-                if all(col in df.columns for col in ['Entrée.', 'Sortie.', 'Nom.']):
-                    extracted_data = []
-                    cumulative_diff = pd.Timedelta(0)
-                    formatted_cum_diff = '00:00:00'
-
-                    for _, row in df.iterrows():
-                        Entrée = pd.to_datetime(row['Entrée.'], errors='coerce')
-                        Sortie = pd.to_datetime(row['Sortie.'], errors='coerce')
-                        Nom = row['Nom.']
-                        Date = pd.to_datetime(row['Date.'], errors='coerce')
-
-                        print(f"Processing row: Entrée={Entrée}, Sortie={Sortie}, Nom={Nom}")  
-
-                        if pd.notna(Entrée) and pd.notna(Sortie):
-                            time_diff = Sortie - Entrée
-                            total_seconds = int(time_diff.total_seconds())
-                            diff_hours = total_seconds // 3600
-                            diff_minutes = (total_seconds % 3600) // 60
-                            diff_seconds = total_seconds % 60
-                            formatted_diff = f"{diff_hours:02}:{diff_minutes:02}:{diff_seconds:02}"
-
-                            cumulative_diff += time_diff
-                            cumulative_total_seconds = int(cumulative_diff.total_seconds())
-                            cum_hours = cumulative_total_seconds // 3600
-                            cum_minutes = (cumulative_total_seconds % 3600) // 60
-                            cum_seconds = cumulative_total_seconds % 60
-                            formatted_cum_diff = f"{cum_hours:02}:{cum_minutes:02}:{cum_seconds:02}"
-
-                            extracted_data.append({
-                                'Entrée': Entrée.strftime('%H:%M:%S'),
-                                'Sortie': Sortie.strftime('%H:%M:%S'),
-                                'Nom': Nom,
-                                'Date': Date.strftime('%Y-%m-%d'),
-                                'Travail': formatted_diff,
-                                'Travail Cumulée': formatted_cum_diff,
-                                'Commentaire': ''  
-                            })
-                        else:
-                            extracted_data.append({
-                                'Entrée': 'Abs',
-                                'Sortie': 'Abs',
-                                'Nom': Nom,
-                                'Date': 'Abs',
-                                'Travail': 'Abs',
-                                'Travail Cumulée': formatted_cum_diff,
-                                'Commentaire': '' 
-                            })
-
-                    extracted_df = pd.DataFrame(extracted_data)
-                    reordered_columns = ['Nom', 'Date', 'Entrée', 'Sortie', 'Travail', 'Travail Cumulée', 'Commentaire']
-                    extracted_df = extracted_df[reordered_columns]
-
-                    print("Extracted and converted rows:")
-                    print(extracted_df)
-
-                    self.df = extracted_df 
-
-                    return extracted_df
-                else:
-                    print("Required columns are not present in the DataFrame.")
-                    return None
-            except Exception as e:
-                print(f"Error loading file {file_path}: {e}")
-                return None
-        else:
-            print(f"The file {file_path} does not exist.")
-            return None 
-
-    def save_excel(self, df, output_file_path):
-        try:
-            df.to_excel(output_file_path, index=False)
-            wb = load_workbook(output_file_path)
-            ws = wb.active
-
-            column_widths = {
-                1: 30,  
-                2: 20,  
-                3: 20,  
-                4: 20,  
-                5: 20,  
-                6: 30,  
-                7: 50   
-            }
-
-            for col, width in column_widths.items():
-                ws.column_dimensions[ws.cell(row=1, column=col).column_letter].width = width
-
-            wb.save(output_file_path)
-
-            print(f"DataFrame saved as {output_file_path} with adjusted column widths")
-        except Exception as e:
-            print(f"Error saving DataFrame as {output_file_path}: {e}")
-
-    def insert_to_db(self, df):
-        connection = self.connect_db()
-
-        if connection is None:
-            print("Failed to connect to the database.")
-            return
-
-        try:
-            cursor = connection.cursor()
-            insert_query = """
-                INSERT INTO dbbi (Nom, Date, Travail, Travail_cumule)
-                VALUES (%s, %s, %s, %s)
-            """
-            check_query = """
-                SELECT COUNT(*) FROM dbbi WHERE Nom = %s AND Date = %s
-            """
-
-            for _, row in df.iterrows():
-                nom = row['Nom'] if row['Nom'] != 'Abs' else None
-                date = row['Date'] if row['Date'] != 'Abs' else None
-                travail = row['Travail'] if row['Travail'] != 'Abs' else None
-                travail_cumulee = row['Travail Cumulée'] if row['Travail Cumulée'] != 'Abs' else None
-                
-              # si Nom ou Date est None, ignorer l'insertion
-                if nom is None or date is None:
-                    print(f"Skipping row with missing Nom or Date: {row}")
-                    continue
-
-                print(f"Checking for existing data: (Nom: {nom}, Date: {date})")
-                
-                try:
-                    cursor.execute(check_query, (nom, date))
-                    exists = cursor.fetchone()[0]
-
-                    if exists:
-                        print(f"Data already exists: (Nom: {nom}, Date: {date})")
-                        continue
-
-                    print(f"Inserting data: (Nom: {nom}, Date: {date}, Travail: {travail}, Travail_cumulee: {travail_cumulee})")
-                    cursor.execute(insert_query, (nom, date, travail, travail_cumulee))
-                except Exception as e:
-                    print(f"Error executing query with data (Nom: {nom}, Date: {date}, Travail: {travail}, Travail_cumulee: {travail_cumulee}): {e}")
-                    connection.rollback()
-                    return
-
-            connection.commit()
-            print("Data inserted successfully into the database.")
-        except Exception as e:
-            print(f"Error inserting data: {e}")
-        finally:
-            cursor.close()
-            connection.close()
-
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super(MainWindow, self).__init__()
-        self.init_ui()
-        self.file_handler = ExcelFileHandler()
-
-    def init_ui(self):
-        self.load_button = QPushButton("Charger le fichier Excel")
-        self.save_button = QPushButton("Enregistrez le fichier Excel")
-        self.insert_button = QPushButton("Insérer dans la bd")
-        self.dashboard_button = QPushButton("Tableau de bord")
-        self.table_view = QTableView()
-
-        self.load_button.clicked.connect(self.load_file_dialog)
-        self.save_button.clicked.connect(self.save_file_dialog)
-        self.insert_button.clicked.connect(self.insert_data_to_db)  
-        self.dashboard_button.clicked.connect(self.open_dashboard)
-
-        # créer une mise en page horizontale pour les boutons
-        button_layout = QHBoxLayout()
-        button_layout.addWidget(self.load_button)
-        button_layout.addWidget(self.save_button)
-        button_layout.addWidget(self.insert_button)  
-        button_layout.addWidget(self.dashboard_button)
-        button_layout.setAlignment(Qt.AlignCenter)
-
-        # définir les tailles des boutons
-        self.load_button.setFixedSize(300, 70)
-        self.save_button.setFixedSize(300, 70)
-        self.insert_button.setFixedSize(300, 70) 
-        self.dashboard_button.setFixedSize(300, 70)
-
-
-        self.table_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        layout = QVBoxLayout()
-        layout.addWidget(self.table_view)
-        layout.addLayout(button_layout)  
-
-        layout.setStretch(0, 1)  
-        layout.setStretch(1, 0)  
-
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
-
-        self.setStyleSheet("""
+        self.apply_button = QPushButton("Appliquer le Filtre")
+        self.apply_button.clicked.connect(self.apply_filter)
+        self.filter_layout.addWidget(self.apply_button)
+        self.apply_button.setStyleSheet("""
             QPushButton {
-                background-color: #1887f5;
-                border: none;
-                color: white;
-                padding: 15px 30px;
-                text-align: center;
-                text-decoration: none;
-                display: inline-block;
-                font-size: 18px;
-                margin: 10px;
-                transition-duration: 0.4s;
-                cursor: pointer;
-                border-radius: 8px;
+            background-color: #1887f5;
+            color: white;
+            border: none;
+            padding: 10px;
             }
-            
             QPushButton:hover {
                 background-color: #0578eb;
-            }
-            
-            QTableView::item {
-                font-weight: bold;
-            }
-            
-            QHeaderView::section {
-                font-weight: bold; 
-                font-size: 16px;
-            }
-            
-            QTabWidget::pane {
-                border: 1px solid #C2C7CB;
-                border-radius: 8px;
-                background-color: #F5F5F5;
-                margin-top: 12px;
-            }
-            
-            QTabBar::tab {
-                background-color: #1887f5;
-                color: white;
-                padding: 8px 16px;
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
-                margin-right: -1px;
-            }
-            
-            QTabBar::tab:selected {
-                background-color: #2e8b57;
-            }
+                }
         """)
 
-    def load_file_dialog(self):
-        options = QFileDialog.Options()
-        file, _ = QFileDialog.getOpenFileName(self, "Charger le fichier Excel", "", "Fichiers Excel (*.xls *.xlsx)", options=options)
-        if file:
-            extracted_df = self.file_handler.load_excel(file)
-            if extracted_df is not None:
-                self.update_table_view(extracted_df)
+        self.figure, self.ax = plt.subplots(3, 2, figsize=(12, 18))
+
+        self.canvas = FigureCanvas(self.figure)
+        self.layout.addWidget(NavigationToolbar(self.canvas, self))
+        self.layout.addWidget(self.canvas)
+
+        self.load_and_process_data()
+        self.filtered_df = self.df
+        self.plot_data()
+
+    def load_and_process_data(self):
+        try:
+            # créer un moteur de base de données
+            engine = create_engine('postgresql://postgres:mellowo@localhost:5432/bi')
+
+            # lire les données de la base de données dans un DataFrame
+            self.df = pd.read_sql('SELECT * FROM dbbi', engine)
+
+            # afficher les noms des colonnes et quelques lignes pour vérification
+            print("Column names:", self.df.columns)
+            print("Sample data:\n", self.df.head())
+
+            if 'nom' in self.df.columns:
+                noms = self.df['nom'].dropna().unique()  # supprimer les valeurs NaN et obtenir les noms uniques
+                cleaned_noms = [nom.strip() for nom in noms] # supprimer les espaces au début/à la fin
+                unique_noms = sorted(set(cleaned_noms)) # supprimer les doublons et trier
+                self.name_listwidget.clear()  # vider les éléments existants
+                self.name_listwidget.addItems(["Tous les noms"] + unique_noms)
             else:
-                self.show_error_message("Échec du chargement du fichier Excel. Vérifiez le format du fichier et les colonnes requises.")
+                print("Column 'nom' does not exist in the DataFrame.")
 
-    def save_file_dialog(self):
-        options = QFileDialog.Options()
-        file, _ = QFileDialog.getSaveFileName(self, "Enregistrez le fichier Excel", "", "Fichiers Excel (*.xlsx)", options=options)
-        if file:
-            model = self.table_view.model()
-            if model is not None:
-                df = model.get_dataframe()
-                self.file_handler.save_excel(df, file)
+            # s'assurer que la colonne 'date' est au format datetime
+            if 'date' in self.df.columns:
+                self.df['date'] = pd.to_datetime(self.df['date'], errors='coerce')
+                self.df['month'] = self.df['date'].dt.month
 
-    def insert_data_to_db(self):
-        model = self.table_view.model()
-        if model is not None:
-            df = model.get_dataframe()
-            self.file_handler.insert_to_db(df)
+            # fonction pour obtenir le jour de la semaine à partir d'un objet datetime
+                def get_day_of_week(date_obj):
+                    return date_obj.strftime("%A") if pd.notna(date_obj) else None
 
-    def open_dashboard(self):
-        # cacher la fenêtre principale
-        self.hide()
-        dashboard = Dashboard()
-        self.setCentralWidget(dashboard)
-        # créer une instance de CourriersWidget
-        self.showMaximized() 
-        
-    def update_table_view(self, df):
-        model = PandasModel(df)
-        self.table_view.setModel(model)
+                # appliquer la fonction à la colonne 'date' et créer une nouvelle colonne 'Jour_de_la_Semaine'
+                self.df['Jour_de_la_Semaine'] = self.df['date'].apply(get_day_of_week)
 
-        self.table_view.setColumnWidth(0, 150)  # Nom
-        self.table_view.setColumnWidth(1, 150)  # Date
-        self.table_view.setColumnWidth(2, 150)  # Entrée
-        self.table_view.setColumnWidth(3, 150)  # Sortie
-        self.table_view.setColumnWidth(4, 200)  # Travail 
-        self.table_view.setColumnWidth(5, 200)  # Travail Cumulée
-        self.table_view.setColumnWidth(6, 845)  # Commentaire
+                # convertir 'travail' en format numérique pour l'affichage
+                self.df['travail'] = pd.to_timedelta(self.df['travail']).dt.total_seconds() / 3600  # convertir en heures
+            else:
+                print("Column 'date' does not exist in the DataFrame.")
 
-    def show_error_message(self, message):
-        QMessageBox.critical(self, "Erreur", message)
+        except Exception as e:
+            print(f"Erreur lors du chargement et du traitement des données : {e}")
+            self.df = pd.DataFrame()  # définir sur DataFrame vide en cas d'erreur
+
+    def apply_filter(self):
+        try:
+            print("Initial DataFrame:\n", self.df.head())
+
+            selected_months = []
+            selected_items = self.month_listwidget.selectedItems()
+
+            # vérifier si 'tous les mois' est sélectionné
+            if any(item.text() == 'tous les mois' for item in selected_items):
+                selected_months.append('tous les mois')
+            else:
+                # convertir les valeurs numériques des mois
+                selected_months = [int(item.text()) for item in selected_items if item.text().isdigit()]
+            selected_names = [item.text() for item in self.name_listwidget.selectedItems()]
+
+            print("Selected months:", selected_months)
+            print("Selected names:", selected_names)
+
+
+            print("Selected months:", selected_months)
+            print("Selected names:", selected_names)
+
+            if 'date' in self.df.columns:
+                # filtrer par mois sélectionné
+                if selected_months:
+                    month_filtered_df = self.df[self.df['date'].dt.month.isin(selected_months)]
+                else:
+                    month_filtered_df = self.df
+
+                # filtrer par nom sélectionné
+
+                if "Tous les noms" not in selected_names:
+                    self.filtered_df = month_filtered_df[month_filtered_df['nom'].isin(selected_names)]
+                else:
+                    self.filtered_df = month_filtered_df
+
+                # effacer les éléments actuels de QListWidget
+                self.list_widget.clear()
+
+                # remplir le QListWidget avec les données filtrées
+                for _, row in self.filtered_df.iterrows():
+                    item_text = f"{row['nom']} - {row['date']}"  # Customize this to display what you want
+                    list_item = QListWidgetItem(item_text)
+                    self.list_widget.addItem(list_item)
+
+                self.list_widget.clear()
+
+                # remplir le QListWidget avec les données filtrées
+                for _, row in self.filtered_df.iterrows():
+                    item_text = f"{row['nom']} - {row['date']}"  # Customize this to display what you want
+                    list_item = QListWidgetItem(item_text)
+                    self.list_widget.addItem(list_item)
+
+                print("Filtered DataFrame:\n", self.filtered_df)
+
+            else:
+                print("Column 'date' does not exist in the DataFrame.")
+                self.filtered_df = pd.DataFrame()
+
+            self.plot_data()
+
+        except Exception as e:
+            print(f"Erreur lors de l'application du filtre : {e}")
+            self.filtered_df = pd.DataFrame() 
+
+    def plot_data(self):
+
+        if self.filtered_df.empty:
+            # effacer les graphiques précédents
+            for ax in self.ax.flatten():
+                ax.clear()
+
+            # afficher un message sur les graphiques indiquant qu'il n'y a pas de données
+            for ax in self.ax.flatten():
+                ax.text(0.5, 0.5, 'Aucune donnée disponible pour le graphique', 
+                        horizontalalignment='center', verticalalignment='center',
+                        transform=ax.transAxes, fontsize=12, color='red')
+
+            self.canvas.draw()
+            return
+
+        # exclure le samedi et le dimanche pour le graphique en barres
+        weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+        weekdays_fr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi']
+        # filtrer les données pour le mois sélectionné
+        filtered_df = self.filtered_df[self.filtered_df['Jour_de_la_Semaine'].isin(weekdays)]
+
+        # grouper par 'Jour_de_la_Semaine' et calculer la moyenne du 'travail'
+        grouped = filtered_df.groupby('Jour_de_la_Semaine')['travail'].mean().reindex(weekdays, fill_value=0)
+        grouped.index = weekdays_fr 
+
+        self.ax[1, 0].clear()
+        sns.barplot(x=grouped.index, y=grouped.values, palette='Blues_d', ax=self.ax[1, 0])
+
+        # vérifier si `grouped` contient des données avant de surligner les barres
+        if len(grouped) > 0:
+            # s'assurer que les indices sont dans la plage
+            highest_day = grouped.idxmax()
+            lowest_day = grouped.idxmin()
+            try:
+                highest_idx = grouped.index.get_loc(highest_day)
+                lowest_idx = grouped.index.get_loc(lowest_day)
+                self.ax[1, 0].patches[highest_idx].set_facecolor('green')
+                self.ax[1, 0].patches[lowest_idx].set_facecolor('red')
+            except IndexError:
+                pass  # gérer le cas où les indices sont hors de la plage
+
+        self.ax[1, 0].set_xlabel('Jour de la Semaine')
+        self.ax[1, 0].set_ylabel('Moyenne Travail (heures)')
+        self.ax[1, 0].set_title('Moyenne Travail par Jour de la Semaine')
+
+        # s'assurer que la liste `patches` est remplie avant d'ajouter des infobulles interactives
+        if hasattr(self.ax[1, 0], 'patches') and len(self.ax[1, 0].patches) > 0:
+            mplcursors.cursor(self.ax[1, 0].patches, hover=True).connect(
+                "add", lambda sel: sel.annotation.set_text(f'{grouped.index[sel.index]}: {grouped.values[sel.index]:.1f} heures')
+            )
+
+        # tracer le travail pour chaque date, y compris les dates manquantes
+        all_dates = pd.date_range(start=self.filtered_df['date'].min(), end=self.filtered_df['date'].max())
+        full_df = pd.DataFrame({'date': all_dates})
+        full_df = full_df.merge(self.filtered_df[['date', 'travail']], on='date', how='left').fillna({'travail': 0})
+
+        self.ax[1, 1].clear()
+        sns.lineplot(x='date', y='travail', data=full_df, marker='o', color='blue', ax=self.ax[1, 1])
+
+        # vérifier si `full_df` contient des données avant de tracer les points dans le graphique en ligne
+        if not full_df.empty:
+            avg_value = full_df['travail'].mean()
+            max_date = full_df.loc[full_df['travail'] == full_df['travail'].max(), 'date'].iloc[0]
+            min_date = full_df.loc[full_df['travail'] == full_df['travail'].min(), 'date'].iloc[0]
+            self.ax[1, 1].plot(max_date, full_df['travail'].max(), 'go', markersize=10)
+            self.ax[1, 1].plot(min_date, full_df['travail'].min(), 'ro', markersize=10)
+
+        # changer la couleur de la ligne pour indiquer le seuil
+        self.ax[1, 1].plot(full_df['date'], full_df['travail'], color='blue')
+        self.ax[1, 1].axhline(y=8, color='red', linestyle='--', label='Seuil de 8 heures')
+        self.ax[1, 1].axhline(y=avg_value, color='orange', linestyle='--', label='Moyenne Travail')
+
+        self.ax[1, 1].set_xlabel('Date')
+        self.ax[1, 1].set_ylabel('Travail (heures)')
+        self.ax[1, 1].set_title('Travail au Fil du Temps')
+        self.ax[1, 1].xaxis.set_major_formatter(DateFormatter('%d-%m-%Y'))
+
+        # tracer le total du travail par mois
+        monthly_totals = self.filtered_df.groupby(self.filtered_df['date'].dt.to_period('M')).agg({'travail': 'mean'})
+        monthly_totals.index = monthly_totals.index.to_timestamp()
+
+        self.ax[2, 0].clear()
+        sns.barplot(x=monthly_totals.index.strftime('%Y-%m'), y=monthly_totals['travail'], palette='Blues_d', ax=self.ax[2, 0])
+
+        self.ax[2, 0].set_xlabel('Mois')
+        self.ax[2, 0].set_ylabel('Moyenne Travail (heures)')
+        self.ax[2, 0].set_title('Moyenne Travail par Mois')
+
+        # s'assurer que la liste `patches` est remplie avant de surligner les barres
+        if len(self.ax[2, 0].patches) > 0:
+            highest_day = grouped.idxmax()
+            lowest_day = grouped.idxmin()
+            try:
+                highest_idx = grouped.index.get_loc(highest_day)
+                lowest_idx = grouped.index.get_loc(lowest_day)
+                self.ax[2, 0].patches[highest_idx].set_facecolor('green')
+                self.ax[2, 0].patches[lowest_idx].set_facecolor('red')
+            except IndexError:
+                pass  # gérer le cas où les indices sont hors de la plage
+
+        # ajouter des infobulles interactives pour le graphique en barres
+        if hasattr(self.ax[2, 0], 'patches') and len(self.ax[2, 0].patches) > 0:
+            mplcursors.cursor(self.ax[2, 0].patches, hover=True).connect(
+                "add", lambda sel: sel.annotation.set_text(f'{monthly_totals.index[sel.index].strftime("%Y-%m")}: {monthly_totals["travail"].iloc[sel.index]:.1f} heures')
+            )
+
+        # tracer le nombre de jours de travail par mois
+        days_of_travail = monthly_totals['travail'] / 8  # convertir les heures en jours
+
+        self.ax[2, 1].clear()
+        sns.lineplot(x=monthly_totals.index, y=days_of_travail, marker='o', color='blue', ax=self.ax[2, 1])
+
+        max_days = days_of_travail.max()
+        min_days = days_of_travail.min()
+        max_date_days = days_of_travail.idxmax()
+        min_date_days = days_of_travail.idxmin()
+        self.ax[2, 1].plot(max_date_days, max_days, 'go', markersize=10, label='Max Jours de Travail')
+        self.ax[2, 1].plot(min_date_days, min_days, 'ro', markersize=10, label='Min Jours de Travail')
+
+        self.ax[2, 1].set_xlabel('Mois')
+        self.ax[2, 1].set_ylabel('Nombre de Jours de Travail')
+        self.ax[2, 1].set_title('Nombre de Jours de Travail par Mois')
+
+        # graphique en anneau montrant le nombre d'heures de travail par rapport aux heures prévues
+        expected_hours_per_week = 40
+        actual_hours = self.filtered_df['travail'].mean() * len(pd.date_range(start=self.filtered_df['date'].min(), end=self.filtered_df['date'].max(), freq='D')) / 7
+        total_weeks = len(pd.date_range(start=self.filtered_df['date'].min(), end=self.filtered_df['date'].max(), freq='W'))
+
+        expected_hours = expected_hours_per_week * total_weeks
+        actual_hours = max(0, actual_hours)
+        expected_hours = max(0, expected_hours)
+
+        self.ax[0, 1].clear()
+        if expected_hours > 0:
+            wedges, texts, autotexts = self.ax[0, 1].pie(
+                [actual_hours, expected_hours - actual_hours],
+                labels=['Heures Réelles', 'Heures Attendues'],
+                autopct='%1.1f%%',
+                startangle=90,
+                colors=['#1887f5', '#fa0707'],
+                wedgeprops=dict(width=0.3) 
+            )
+
+        if 'nom' in self.filtered_df.columns:
+            employee_totals = self.filtered_df.groupby('nom')['travail'].sum()
+            most_worked_employee = employee_totals.idxmax()
+            least_worked_employee = employee_totals.idxmin()
+
+            self.ax[0, 0].clear()
+            self.ax[0, 0].text(0.5, 0.6, f"Employé le Plus Travaillé: {most_worked_employee}",
+                            horizontalalignment='center', verticalalignment='center',
+                            transform=self.ax[0, 0].transAxes, fontsize=12, color='green')
+            self.ax[0, 0].text(0.5, 0.4, f"Employé le Moins Travaillé: {least_worked_employee}",
+                            horizontalalignment='center', verticalalignment='center',
+                            transform=self.ax[0, 0].transAxes, fontsize=12, color='red')
+            self.ax[0, 0].set_title('Employés Travaillés')
+
+            self.ax[0, 0].axis('off')            
+
+        self.ax[0, 0].axis('off')
+
+        plt.subplots_adjust(wspace=0.5, hspace=0.5)
+        self.canvas.draw()
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    main_window = MainWindow()
-    main_window.showMaximized()
+    app = QWidget(sys.argv)
+    window = Dashboard ()
+    window.showMaximized()
     sys.exit(app.exec_())
