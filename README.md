@@ -33,7 +33,7 @@ pip install pandas matplotlib mplcursors sqlalchemy psycopg2-binary pyqt5
 
 # Project Title
 
-A brief description of what this project does and who it's for.
+HR visulisation tool for personal time tracker
 
 ## Setup
 
