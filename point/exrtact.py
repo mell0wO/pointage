@@ -74,27 +74,42 @@ class PandasModel(QAbstractTableModel):
         return False
 
     def update_cumulative_travail(self, start_index=0):
-        cumulative_time = pd.Timedelta(0)  # initialiser le temps cumulé
+        total_hours = 0  # total hours accumulated
+        total_minutes = 0  # total minutes accumulated
 
         for index, row in self.df.iterrows():
             if index < start_index:
-                # ignorer les lignes avant l'index de départ
-                cumulative_time = pd.to_timedelta(row['Travail Cumulée'] + ':00')
+                # Ignore rows before the start index
+                if row['Travail Cumulée'] and isinstance(row['Travail Cumulée'], str):
+                    time_parts = row['Travail Cumulée'].split(':')
+                    total_hours = int(time_parts[0])
+                    total_minutes = int(time_parts[1])
                 continue
 
             if row['Travail'] == 'Abs':
-                self.df.at[index, 'Travail Cumulée'] = cumulative_time
+                # Update Travail Cumulée with the accumulated time
+                self.df.at[index, 'Travail Cumulée'] = f"{total_hours:02}:{total_minutes:02}"
             else:
                 try:
-                    travail = pd.to_timedelta(row['Travail'] + ':00')
-                    cumulative_time += travail
-                    self.df.at[index, 'Travail Cumulée'] = cumulative_time
+                    travail_parts = row['Travail'].split(':')
+                    travail_hours = int(travail_parts[0])
+                    travail_minutes = int(travail_parts[1]) if len(travail_parts) > 1 else 0
+
+                    # Accumulate hours and minutes
+                    total_hours += travail_hours
+                    total_minutes += travail_minutes
+
+                    # Convert minutes to hours if greater than 60
+                    if total_minutes >= 60:
+                        extra_hours = total_minutes // 60
+                        total_hours += extra_hours
+                        total_minutes = total_minutes % 60
+
+                    # Update Travail Cumulée with the accumulated time
+                    self.df.at[index, 'Travail Cumulée'] = f"{total_hours:02}:{total_minutes:02}"
                 except ValueError:
-                    self.df.at[index, 'Travail Cumulée'] = cumulative_time
-
-        # formater la colonne 'Travail Cumulée' en 'hh:mm'
-        self.df['Travail Cumulée'] = self.df['Travail Cumulée'].apply(lambda x: str(x).split()[-1] if pd.notna(x) else '00:00')
-
+                    # In case of an error, keep the last valid cumulative time
+                    self.df.at[index, 'Travail Cumulée'] = f"{total_hours:02}:{total_minutes:02}"
 
     def flags(self, index):
         if not index.isValid():
