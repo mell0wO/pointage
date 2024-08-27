@@ -10,19 +10,17 @@ from sqlalchemy import create_engine
 from matplotlib.dates import DateFormatter
 
 class Dashboard(QWidget):
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Jour de la Semaine vs Travail")
         self.setGeometry(100, 100, 1200, 800)
-        # créer la mise en page principale
         self.layout = QVBoxLayout(self)
         self.list_widget = QListWidget()
 
-        # créer une mise en page pour le filtre de sélection du mois et du nom
         self.filter_layout = QHBoxLayout()
         self.layout.addLayout(self.filter_layout)
 
-        # menu déroulant de sélection du mois
         self.month_listwidget = QListWidget()
         self.month_listwidget.addItem("Tous les mois")
         for month in range(1, 13):
@@ -30,34 +28,23 @@ class Dashboard(QWidget):
         self.month_listwidget.setSelectionMode(QListWidget.MultiSelection)
         self.filter_layout.addWidget(self.month_listwidget)
 
-        # menu déroulant de sélection du nom
         self.name_listwidget = QListWidget()
-        self.name_listwidget.addItem("Tous les noms")  # Placeholder item
+        self.name_listwidget.addItem("Tous les noms")
         self.name_listwidget.setSelectionMode(QListWidget.MultiSelection)
         self.filter_layout.addWidget(self.name_listwidget)
 
-        self.name_listwidget.setSelectionMode(QListWidget.MultiSelection)
-
-        # bouton d'application du filtre
         self.apply_button = QPushButton("Appliquer le Filtre")
         self.apply_button.clicked.connect(self.apply_filter)
         self.filter_layout.addWidget(self.apply_button)
 
-        # créer la figure et les axes de matplotlib
-        self.figure, self.ax = plt.subplots(3, 2, figsize=(12, 18))  # Trois lignes, deux colonnes
+        self.figure, self.ax = plt.subplots(3, 2, figsize=(12, 18))
 
-        # créer le canvas et l'ajouter à la mise en page
         self.canvas = FigureCanvas(self.figure)
         self.layout.addWidget(NavigationToolbar(self.canvas, self))
         self.layout.addWidget(self.canvas)
 
-        # charger et traiter les données
         self.load_and_process_data()
-
-        # initialiser filtered_df avec l'ensemble complet des données
         self.filtered_df = self.df
-
-        # tracer les données
         self.plot_data()
 
     def load_and_process_data(self):
@@ -107,7 +94,15 @@ class Dashboard(QWidget):
             # Print initial DataFrame
             print("Initial DataFrame:\n", self.df.head())
 
-            selected_months = [int(item.text()) for item in self.month_listwidget.selectedItems()]
+            selected_months = []
+            selected_items = self.month_listwidget.selectedItems()
+
+            # Check if 'tous les mois' is selected
+            if any(item.text() == 'tous les mois' for item in selected_items):
+                selected_months.append('tous les mois')
+            else:
+                # Convert numeric month values
+                selected_months = [int(item.text()) for item in selected_items if item.text().isdigit()]
             selected_names = [item.text() for item in self.name_listwidget.selectedItems()]
 
             print("Selected months:", selected_months)
@@ -157,8 +152,7 @@ class Dashboard(QWidget):
 
         except Exception as e:
             print(f"Erreur lors de l'application du filtre : {e}")
-            self.filtered_df = pd.DataFrame()
-                
+            self.filtered_df = pd.DataFrame()                
     def plot_data(self):
         if self.filtered_df.empty:
             # effacer les graphiques précédents
@@ -197,7 +191,7 @@ class Dashboard(QWidget):
         self.ax[1, 0].set_ylabel('Moyenne Travail (heures)')
         self.ax[1, 0].set_title('Moyenne Travail par Jour de la Semaine')
 
-        # ajouter des infobulles interactives uniquement pour le graphique en barres
+        # ajouter des infobulles interactives  pour le graphique en barres
         mplcursors.cursor(bars, hover=True).connect(
             "add", lambda sel: sel.annotation.set_text(f'{grouped.index[sel.index]}: {grouped.values[sel.index]:.1f} heures')
         )
@@ -226,7 +220,7 @@ class Dashboard(QWidget):
         self.ax[1, 1].set_title('Travail au Fil du Temps')
         self.ax[1, 1].xaxis.set_major_formatter(DateFormatter('%d-%m-%Y'))
 
-        # Tracer le total du travail par mois
+        # tracer le total du travail par mois
         monthly_totals = self.filtered_df.groupby(self.filtered_df['date'].dt.to_period('M')).agg({'travail': 'mean'})
         monthly_totals.index = monthly_totals.index.to_timestamp()
 
@@ -237,12 +231,12 @@ class Dashboard(QWidget):
         self.ax[2, 0].set_ylabel('Moyenne Travail (heures)')
         self.ax[2, 0].set_title('Moyenne Travail par Mois')
 
-        # Ajouter des infobulles interactives pour le graphique en barres
+        # ajouter des infobulles interactives pour le graphique en barres
         mplcursors.cursor(bars, hover=True).connect(
             "add", lambda sel: sel.annotation.set_text(f'{monthly_totals.index[sel.index].strftime("%Y-%m")}: {monthly_totals["travail"].iloc[sel.index]:.1f} heures')
         )
 
-        # Tracer le nombre de jours de travail par mois
+        # tracer le nombre de jours de travail par mois
         days_of_travail = monthly_totals['travail'] / 8  # Convertir les heures en jours
 
         self.ax[2, 1].clear()
@@ -281,40 +275,22 @@ class Dashboard(QWidget):
 
 
         if 'nom' in self.filtered_df.columns:
-            employee_totals = self.filtered_df.groupby('nom')['travail'].mean().sort_values(ascending=False)
+            employee_totals = self.filtered_df.groupby('nom')['travail'].sum()
+            most_worked_employee = employee_totals.idxmax()
+            least_worked_employee = employee_totals.idxmin()
 
-            top_5 = employee_totals.head(5)
-            bottom_5 = employee_totals.tail(5)
-
-            # Combine top 5 and bottom 5 employees into one DataFrame
-            top_bottom_employees = pd.concat([top_5, bottom_5])
-            
-            # Clear the previous plot
             self.ax[0, 0].clear()
+            self.ax[0, 0].text(0.5, 0.6, f"Employé le Plus Travaillé: {most_worked_employee}",
+                            horizontalalignment='center', verticalalignment='center',
+                            transform=self.ax[0, 0].transAxes, fontsize=12, color='green')
+            self.ax[0, 0].text(0.5, 0.4, f"Employé le Moins Travaillé: {least_worked_employee}",
+                            horizontalalignment='center', verticalalignment='center',
+                            transform=self.ax[0, 0].transAxes, fontsize=12, color='red')
+            self.ax[0, 0].set_title('Employés Travaillés')
 
-            # Create a table
-            cell_text = []
-            row_labels = []
-            for i, (employee, work) in enumerate(top_bottom_employees.items()):
-                if i < 5:
-                    row_labels.append(f'Top {i+1}')
-                else:
-                    row_labels.append(f'Bottom {i-4}')
-                cell_text.append([employee, f'{work:.2f}'])
-
-            # Add the table to the axes
-            table = self.ax[0, 0].table(cellText=cell_text,
-                                        colLabels=["Employé", "Travail (heures)"],
-                                        rowLabels=row_labels,
-                                        loc='center')
-
-            table.auto_set_font_size(False)
-            table.set_fontsize(14)  # Increase the font size
-            table.scale(1.2, 3)  # Increase the vertical scale to make the table longer
             self.ax[0, 0].axis('off')
-            self.ax[0, 0].set_title('Top et Bottom 5 Employés')
 
-        plt.subplots_adjust(hspace=0.4, wspace=0.3)
+        plt.subplots_adjust(wspace=0.5, hspace=0.5)
         self.canvas.draw()
 
 if __name__ == "__main__":
