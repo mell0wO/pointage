@@ -51,7 +51,7 @@ class PandasModel(QAbstractTableModel):
                     # analyser le temps de 'Travail' au format hh:mm
                     new_time = pd.to_timedelta(value + ':00') 
                     # convertir timedelta au format hh:mm
-                    time_str = str(new_time).split()[2][:5]  # extraire 'hh:mm'
+                    time_str = str(new_time).split()[2][:5] 
                     self.df.iat[index.row(), index.column()] = time_str
                     # mettre à jour le temps cumulé à partir de cette ligne
                     self.update_cumulative_travail(start_index=index.row())
@@ -79,7 +79,7 @@ class PandasModel(QAbstractTableModel):
 
         for index, row in self.df.iterrows():
             if index < start_index:
-                # Ignore rows before the start index
+                # ignore rows before the start index
                 if row['Travail Cumulée'] and isinstance(row['Travail Cumulée'], str):
                     time_parts = row['Travail Cumulée'].split(':')
                     total_hours = int(time_parts[0])
@@ -87,28 +87,22 @@ class PandasModel(QAbstractTableModel):
                 continue
 
             if row['Travail'] == 'Abs':
-                # Update Travail Cumulée with the accumulated time
                 self.df.at[index, 'Travail Cumulée'] = f"{total_hours:02}:{total_minutes:02}"
             else:
                 try:
                     travail_parts = row['Travail'].split(':')
                     travail_hours = int(travail_parts[0])
                     travail_minutes = int(travail_parts[1]) if len(travail_parts) > 1 else 0
-
-                    # Accumulate hours and minutes
                     total_hours += travail_hours
                     total_minutes += travail_minutes
 
-                    # Convert minutes to hours if greater than 60
                     if total_minutes >= 60:
                         extra_hours = total_minutes // 60
                         total_hours += extra_hours
                         total_minutes = total_minutes % 60
 
-                    # Update Travail Cumulée with the accumulated time
                     self.df.at[index, 'Travail Cumulée'] = f"{total_hours:02}:{total_minutes:02}"
                 except ValueError:
-                    # In case of an error, keep the last valid cumulative time
                     self.df.at[index, 'Travail Cumulée'] = f"{total_hours:02}:{total_minutes:02}"
 
     def flags(self, index):
@@ -159,7 +153,7 @@ class ExcelFileHandler:
                         Entrée = pd.to_datetime(row['Entrée.'], errors='coerce')
                         Sortie = pd.to_datetime(row['Sortie.'], errors='coerce')
                         Nom = row['Nom.']
-                        Date = pd.to_datetime(row['Date.'], errors='coerce')
+                        Date = pd.to_datetime(row['Date.'],format='%d/%m/%Y', errors='coerce')
 
                         print(f"Processing row: Entrée={Entrée}, Sortie={Sortie}, Nom={Nom}")  
 
@@ -345,7 +339,7 @@ class MainWindow(QMainWindow):
 
         self.setStyleSheet("""
             QPushButton {
-                background-color: #4CAF50;
+                background-color: #1887f5;
                 border: none;
                 color: white;
                 padding: 15px 30px;
@@ -360,16 +354,16 @@ class MainWindow(QMainWindow):
             }
             
             QPushButton:hover {
-                background-color: #45a049; /* Darker green */
+                background-color: #0578eb;
             }
             
             QTableView::item {
-                font-weight: bold;  /* Ensure table items are bold */
+                font-weight: bold;
             }
             
             QHeaderView::section {
-                font-weight: bold;  /* Ensure header text is bold */
-                font-size: 16px;   /* Adjust header font size */
+                font-weight: bold; 
+                font-size: 16px;
             }
             
             QTabWidget::pane {
@@ -380,7 +374,7 @@ class MainWindow(QMainWindow):
             }
             
             QTabBar::tab {
-                background-color: #4CAF50;
+                background-color: #1887f5;
                 color: white;
                 padding: 8px 16px;
                 border-top-left-radius: 8px;
@@ -389,7 +383,7 @@ class MainWindow(QMainWindow):
             }
             
             QTabBar::tab:selected {
-                background-color: #2E8B57;
+                background-color: #2e8b57;
             }
         """)
 
